@@ -1,0 +1,63 @@
+name: Deployment pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+jobs:
+  simple_deployment_pipeline:
+   runs-on: ubuntu-18.04
+   steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: '0'
+    - uses: actions/setup-node@v1
+      with:
+        node-version: '12.x'
+    - name: npm install
+      run: npm install
+    - name: build
+      run: npm run build
+    - name: deploy to heroku
+      id: deploy
+      if: ${{ github.event_name == 'push' && !contains(join(github.event.commits.*.message, ', '), '#skip') }}
+      uses: akhileshns/heroku-deploy@v3.12.12
+      with:
+        heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+        heroku_app_name: ${{ secrets.HEROKU_APP }}
+        heroku_email: ${{ secrets.EMAIL }}
+    - name: Bump version and push tag
+      if: ${{ github.event_name == 'push' && !contains(join(github.event.commits.*.message, ', '), '#skip') }}
+      uses: anothrNick/github-tag-action@1.36.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        DEFAULT_BUMP: 'patch'
+    - name: Deploy success notification to Slack
+      if: ${{ steps.deploy.outcome == 'success' }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        fields: commit,author,took
+        custom_payload: |
+          {
+            attachments: [{
+              color: 'good',
+              text: `A new version deployd to https://${{secrets.HEROKU_APP}}.herokuapp.com/ (${process.env.AS_COMMIT})\nby ${process.env.AS_AUTHOR}\nbuild took ${process.env.AS_TOOK}`,
+            }]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    - name: Deploy failure notification to Slack
+      if: ${{ failure() && steps.deploy.outcome == 'failure' }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        fields: repo,message,commit,author,took
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+
